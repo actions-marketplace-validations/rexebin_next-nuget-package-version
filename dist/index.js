@@ -2755,28 +2755,31 @@ exports.getCurrentVersion = void 0;
 const core = __importStar(__nccwpck_require__(186));
 async function getCurrentVersion(token) {
     const org = core.getInput('org');
+    if (org === '') {
+        throw new Error(`Input org is not set`);
+    }
     const packageName = core.getInput('packageName');
+    if (packageName === '') {
+        throw new Error(`Input packageName is not set`);
+    }
     const response = await fetch(`https://api.github.com/orgs/${org}/packages/nuget/${packageName}/versions`, {
         method: 'GET',
         headers: { Authorization: `Bearer ${token}` }
     });
+    const notFoundMessage = 'No current version found. If this is not expected, check your org, package name and token.';
     if (!response.ok) {
+        if (response.status === 404) {
+            console.log(notFoundMessage);
+            return '';
+        }
         throw new Error(`Failed to get current version: ${response.statusText}`);
     }
     const body = await response.json();
     if (body.length === 0) {
-        console.log('No current version found');
+        console.log(notFoundMessage);
         return '';
     }
-    if (!body) {
-        console.log('Failed to get current version');
-        return '';
-    }
-    if (!body[0]) {
-        console.log('Failed to get current version');
-        return '';
-    }
-    return body[0].name;
+    return body[0]?.name;
 }
 exports.getCurrentVersion = getCurrentVersion;
 
@@ -2789,7 +2792,7 @@ exports.getCurrentVersion = getCurrentVersion;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getNextVersion = void 0;
+exports.getNextBetaVersion = exports.getNextVersion = void 0;
 function incrementBetaVersion(currentVersion) {
     const versionParts = currentVersion.split('-beta.');
     const version = versionParts[0];
@@ -2807,30 +2810,25 @@ function incrementPatchVersion(currentVersion) {
     const nextPatchNumber = patchNumber + 1;
     return `${major}.${minor}.${nextPatchNumber}`;
 }
-function getNextVersion(currentVersion, publishBeta) {
-    if (publishBeta) {
-        if (currentVersion.includes('-beta')) {
-            console.log(`Incrementing beta version from last beta version ${currentVersion}`);
-            return incrementBetaVersion(currentVersion);
-        }
-        else {
-            const nextMainVersion = incrementPatchVersion(currentVersion);
-            console.log(`Incrementing main version to ${nextMainVersion} from ${currentVersion} and adding beta.1`);
-            return `${nextMainVersion}-beta.1`;
-        }
+function getNextVersion(currentVersion) {
+    if (currentVersion.includes('-beta')) {
+        console.log(`Publish main version from last beta version ${currentVersion}`);
+        return currentVersion.split('-beta')[0];
     }
-    else {
-        if (currentVersion.includes('-beta')) {
-            console.log(`Publish main version from last beta version ${currentVersion}`);
-            return currentVersion.split('-beta')[0];
-        }
-        else {
-            console.log(`Incrementing patch version from last main version ${currentVersion}`);
-            return incrementPatchVersion(currentVersion);
-        }
-    }
+    console.log(`Incrementing patch version from last main version ${currentVersion}`);
+    return incrementPatchVersion(currentVersion);
 }
 exports.getNextVersion = getNextVersion;
+function getNextBetaVersion(currentVersion) {
+    if (currentVersion.includes('-beta')) {
+        console.log(`Incrementing beta version from last beta version ${currentVersion}`);
+        return incrementBetaVersion(currentVersion);
+    }
+    const nextMainVersion = incrementPatchVersion(currentVersion);
+    console.log(`Incrementing main version to ${nextMainVersion} from ${currentVersion} and adding beta.1`);
+    return `${nextMainVersion}-beta.1`;
+}
+exports.getNextBetaVersion = getNextBetaVersion;
 
 
 /***/ }),
@@ -2868,13 +2866,11 @@ exports.run = void 0;
 const core = __importStar(__nccwpck_require__(186));
 const get_next_version_1 = __nccwpck_require__(965);
 const get_current_version_1 = __nccwpck_require__(498);
-function setFirstVersion(mainVersion, minorVersion, publishBeta) {
-    const nextVersion = `${mainVersion}.${minorVersion}.0`;
-    if (publishBeta) {
-        core.setOutput('version', `${nextVersion}-beta.1`);
-        return;
-    }
-    core.setOutput('version', nextVersion);
+function setFirstVersion(mainVersion, minorVersion) {
+    core.setOutput('version', `${mainVersion}.${minorVersion}.0`);
+}
+function setFirstBetaVersion(mainVersion, minorVersion) {
+    core.setOutput('version', `${mainVersion}.${minorVersion}.0-beta.1`);
 }
 /**
  * The main function for the action.
@@ -2887,23 +2883,34 @@ async function run() {
             throw new Error(`GITHUB_TOKEN not set, please set the GITHUB_TOKEN environment variable to secrets.GITHUB_TOKEN`);
         }
         const minorVersion = core.getInput('minorVersion');
-        const mainVersion = core.getInput('mainVersion');
+        if (minorVersion === '') {
+            throw new Error(`Input minorVersion is not set`);
+        }
+        const majorVersion = core.getInput('majorVersion');
+        if (majorVersion === '') {
+            throw new Error(`Input majorVersion is not set`);
+        }
         const publishBeta = core.getInput('publishBeta').toLowerCase() === 'true';
         const currentVersion = await (0, get_current_version_1.getCurrentVersion)(token);
         if (currentVersion === '') {
             console.log(`No current version found`);
-            setFirstVersion(mainVersion, minorVersion, publishBeta);
+            publishBeta
+                ? setFirstBetaVersion(majorVersion, minorVersion)
+                : setFirstVersion(majorVersion, minorVersion);
             return;
         }
         const currentVersionParts = currentVersion.split('.');
-        if (currentVersionParts[0] !== mainVersion ||
+        if (currentVersionParts[0] !== majorVersion ||
             currentVersionParts[1] !== minorVersion) {
-            console.log(`Current version ${currentVersion} does not match main version ${mainVersion} or minor version ${minorVersion}`);
-            setFirstVersion(mainVersion, minorVersion, publishBeta);
+            console.log(`Current version ${currentVersion} does not match main version ${majorVersion} or minor version ${minorVersion}`);
+            publishBeta
+                ? setFirstBetaVersion(majorVersion, minorVersion)
+                : setFirstVersion(majorVersion, minorVersion);
             return;
         }
-        const nextVersion = (0, get_next_version_1.getNextVersion)(currentVersion, publishBeta);
-        core.setOutput('version', nextVersion);
+        publishBeta
+            ? core.setOutput('version', (0, get_next_version_1.getNextBetaVersion)(currentVersion))
+            : core.setOutput('version', (0, get_next_version_1.getNextVersion)(currentVersion));
     }
     catch (error) {
         // Fail the workflow run if an error occurs
